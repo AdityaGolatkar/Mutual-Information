@@ -51,6 +51,19 @@ parser.add_argument('--start-epoch', default=0, type=int, metavar='N',help='manu
 parser.add_argument('--weight-decay', '--wd', default=0.0, type=float,metavar='W', help='weight decay (default: 0.)')
 args = parser.parse_args()
 
+
+def sample_batch(data, batch_size=100, sample_mode='joint'):
+    if sample_mode == 'joint':
+        index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
+        batch = data[index]
+    else:
+        joint_index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
+        marginal_index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
+        batch = np.concatenate([data[joint_index][:,0].reshape(-1,1),
+                                         data[marginal_index][:,1].reshape(-1,1)],
+                                       axis=1)
+    return batch
+
 def shuffle_features(features):
     features_copy = copy.deepcopy(features.detach().cpu().numpy())
     np.random.shuffle(features_copy)
@@ -76,12 +89,18 @@ def mi_estimation(stat_net,features,shuff_feat,estimator):
         t2 = stat_net(shuff_feat)
         mi_lb = torch.mean(-1*F.softplus(-t1)) - torch.mean(F.softplus(t2))
         return mi_lb, t1, t2   
+
+def get_corr_data():
+    y = np.random.multivariate_normal( mean=[0,0],
+                                  cov=[[1,0.8],[0.8,1]],
+                                 size = 300)
+    return y
     
 def get_MI(train_loader, model, stat_net, optimizer, epoch, estimator, ma_et, train=True, label='Epoch'):
     losses = AverageMeter()
     mi = AverageMeter()
     
-    model.train()
+    model.eval()
                 
     ma_rate = 0.01
     for i, (input, target) in enumerate(train_loader):
@@ -91,8 +110,12 @@ def get_MI(train_loader, model, stat_net, optimizer, epoch, estimator, ma_et, tr
         output, features = model(input)
         shuff_feat = shuffle_features(features)
         
-        features = features.cuda()
-        shuff_feat = shuff_feat.cuda()
+        batch_size=128
+        data = get_corr_data()
+        features,shuff_feat = sample_batch(data,batch_size=batch_size),sample_batch(data,batch_size=batch_size,sample_mode='marginal')
+        
+        features = torch.from_numpy(features).cuda().float()
+        shuff_feat = torch.from_numpy(shuff_feat).cuda().float()
                 
         mi_lb, t, et = mi_estimation(stat_net,features,shuff_feat,estimator)
         
@@ -109,7 +132,7 @@ def get_MI(train_loader, model, stat_net, optimizer, epoch, estimator, ma_et, tr
             loss.backward()
             optimizer.step()
     
-    print(f"{label}: [{epoch}] MI {mi.avg:.6f} Loss {losses.avg:.4f}")
+    print(f"{label}: [{epoch}] MI {mi.avg:.4f} Loss {losses.avg:.4f}")
     logger.append('mi', epoch=epoch, mi=mi.avg, losses=losses.avg)
     
     return ma_et
@@ -189,7 +212,7 @@ if __name__ == '__main__':
     
     #DNN
     model = Network(args.dropout,args.num_hidden,inp_size).cuda()
-    stat_net = Statistic_Network(False,512,512).cuda()
+    stat_net = Statistic_Network(False,100,2).cuda()
 
     #Loss
     criterion = nn.CrossEntropyLoss().cuda()
