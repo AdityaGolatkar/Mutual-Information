@@ -38,24 +38,42 @@ parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,metavar='
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',help='momentum')
 parser.add_argument('--mi-estimate', action='store_true',help='mi estimate')
 parser.add_argument('--name', default='model', type=str,help='name of the run')
-parser.add_argument('--num-hidden', default=512, type=int,help='number of hidden units')
+parser.add_argument('--m-hidden-sz', default=512, type=int,help='number of hidden units')
 parser.add_argument('-o', '--optimizer', default='sgd', type=str,help='Optimizer to use')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',help='path to latest checkpoint (default: none)')
+parser.add_argument('--rho', default=0.8, type=float,help='rho')
 parser.add_argument('--save', dest='save', action='store_true',help='save the model every x epochs')
+parser.add_argument('--sample-exp', action='store_true',help='sample experiment')
 parser.add_argument('--save-final', action='store_true', help='save last version of the model')
 parser.add_argument('--save-every', default=5, type=int,help='interval for saving')
 parser.add_argument('--schedule', nargs='+', default=[200], type=int,help='number of total epochs to run')
 parser.add_argument('--sched_type', default='exp', type=str,help='type of scheduling')
 parser.add_argument('--sfe', action='store_true',help='Save first epoch')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',help='manual epoch number (useful on restarts)')
+parser.add_argument('--s-input-sz', default=512, type=int,help='number of input units in statistics network')
+parser.add_argument('--s-hidden-sz', default=512, type=int,help='number of hidden units in statistics network')
 parser.add_argument('--weight-decay', '--wd', default=0.0, type=float,metavar='W', help='weight decay (default: 0.)')
 args = parser.parse_args()
 
-def shuffle_features(features):
-    features_copy = copy.deepcopy(features.detach().cpu().numpy())
-    np.random.shuffle(features_copy)
-    shuffled_features = torch.from_numpy(features_copy)
-    return shuffled_features
+def sample_batch(data, batch_size=100, sample_mode='joint'):
+    if sample_mode == 'joint':
+        index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
+        batch = data[index]
+    else:
+        joint_index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
+        marginal_index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
+        batch = np.concatenate([data[joint_index][:,0].reshape(-1,1),data[marginal_index][:,1].reshape(-1,1)],axis=1)
+    return batch
+
+def get_corr_data():
+    y = np.random.multivariate_normal( mean=[0,0],cov=[[1,args.rho],[args.rho,1]],size = 300)
+    return y
+
+def shuffle_features(X):
+    b = torch.rand(X.size()).cuda()
+    idx = b.sort(0)[1]
+    adx = torch.arange(0, X.size(1)).long()
+    return X[idx, adx[None, :]]
 
 def mi_estimation(stat_net,features,shuff_feat,estimator):
     
@@ -67,7 +85,7 @@ def mi_estimation(stat_net,features,shuff_feat,estimator):
     
     elif estimator == 'mine-f':
         t = stat_net(features)
-        et = torch.exp(stat_net(shuff_feat))-1
+        et = torch.exp(stat_net(shuff_feat)-1)
         mi_lb = torch.mean(t) - torch.mean(et)
         return mi_lb, t, et
     
@@ -81,24 +99,34 @@ def get_MI(train_loader, model, stat_net, optimizer, epoch, estimator, ma_et, tr
     losses = AverageMeter()
     mi = AverageMeter()
     
-    model.train()
+    model.eval()
                 
     ma_rate = 0.01
     for i, (input, target) in enumerate(train_loader):
-        input = input.reshape(input.shape[0],-1).cuda()
-        target = target.cuda()
 
-        output, features = model(input)
-        shuff_feat = shuffle_features(features)
+        if not args.sample_exp:
+            input = input.reshape(input.shape[0],-1).cuda()
+            target = target.cuda()
+
+            output, features = model(input)
+            shuff_feat = shuffle_features(features)
+
+            features = features.cuda()
+            shuff_feat = shuff_feat.cuda()
         
-        features = features.cuda()
-        shuff_feat = shuff_feat.cuda()
+        else:
+            data = get_corr_data()
+            features,shuff_feat = sample_batch(data,batch_size=args.batch_size),\
+        sample_batch(data,batch_size=args.batch_size,sample_mode='marginal')
+            features = torch.from_numpy(features).cuda().float()
+            shuff_feat = torch.from_numpy(shuff_feat).cuda().float()
                 
         mi_lb, t, et = mi_estimation(stat_net,features,shuff_feat,estimator)
         
         loss = -mi_lb
         if estimator == 'mine':
-            ma_et = (1-ma_rate)*ma_et + ma_rate*torch.mean(et)
+            if ma_et == -1:ma_et=torch.mean(et)
+            else:ma_et = (1-ma_rate)*ma_et + ma_rate*torch.mean(et)
             loss = -(torch.mean(t) - (1/ma_et.mean()).detach()*torch.mean(et)) 
         
         losses.update(loss.item(), input.size(0))
@@ -170,7 +198,7 @@ def save_checkpoint(state, step=True):
     print("Saving {}".format(target_file))
     torch.save(state, target_file)
           
-          
+
 if __name__ == '__main__':
 
     mkdir('logs')
@@ -188,8 +216,8 @@ if __name__ == '__main__':
     train_loader,val_loader,inp_size = get_data(args.dataset,args.batch_size)
     
     #DNN
-    model = Network(args.dropout,args.num_hidden,inp_size).cuda()
-    stat_net = Statistic_Network(False,512,512).cuda()
+    model = Network(args.dropout,args.m_hidden_sz,inp_size).cuda()
+    stat_net = Statistic_Network(args.s_hidden_sz,args.s_input_sz).cuda()
 
     #Loss
     criterion = nn.CrossEntropyLoss().cuda()
@@ -230,11 +258,11 @@ if __name__ == '__main__':
     try:
         if not args.mi_estimate:
             for epoch in range(args.start_epoch, args.schedule[-1]):
-
+                
                 if args.optimizer != 'adam':adjust_learning_rate(optimizer, epoch, args.schedule[:-1])
                 loss = train(train_loader, model, criterion, optimizer, epoch)
                 validate(val_loader, model, criterion, optimizer, epoch)
-
+                
                 #Save
                 state = {'epoch':epoch, 'state_dict':model.state_dict(), 'optimizer':optimizer.state_dict()}
                 if args.save_final and epoch == (args.schedule[-1]-1):
@@ -242,7 +270,7 @@ if __name__ == '__main__':
                 if args.save and epoch % args.save_every == 0:
                     save_checkpoint(state, step=True)
         else:
-            ma_et = 1
+            ma_et = -1
             for epoch in range(args.start_epoch, args.schedule[-1]):
                 ma_et = get_MI(train_loader, model, stat_net, stat_optimizer, epoch, args.estimator, ma_et, train=True, label='Epoch')
         

@@ -5,6 +5,7 @@ import os
 import shutil
 import time
 import sys
+import math
 
 import numpy as np
 
@@ -85,14 +86,18 @@ def mi_estimation(stat_net,features,shuff_feat,estimator):
         return mi_lb, t, et
     
     elif estimator == 'jsd':
-        t1 = stat_net(features)
-        t2 = stat_net(shuff_feat)
-        mi_lb = torch.mean(-1*F.softplus(-t1)) - torch.mean(F.softplus(t2))
+        p_samples = stat_net(features)
+        q_samples = stat_net(shuff_feat)
+        t1 = p_samples
+        t2 = q_samples
+        log_2 = math.log(2.)
+        mi_lb = torch.mean(log_2 - F.softplus(-p_samples)) - torch.mean(F.softplus(-q_samples) + q_samples - log_2)
+        #mi_lb = torch.mean(-1*F.softplus(-t1)) - torch.mean(F.softplus(t2))
         return mi_lb, t1, t2   
 
 def get_corr_data():
     y = np.random.multivariate_normal( mean=[0,0],
-                                  cov=[[1,0.8],[0.8,1]],
+                                  cov=[[1,0.9],[0.9,1]],
                                  size = 300)
     return y
     
@@ -112,11 +117,12 @@ def get_MI(train_loader, model, stat_net, optimizer, epoch, estimator, ma_et, tr
         
         batch_size=128
         data = get_corr_data()
-        features,shuff_feat = sample_batch(data,batch_size=batch_size),sample_batch(data,batch_size=batch_size,sample_mode='marginal')
+        features,shuff_feat = sample_batch(data,batch_size=batch_size),\
+        sample_batch(data,batch_size=batch_size,sample_mode='marginal')
         
         features = torch.from_numpy(features).cuda().float()
         shuff_feat = torch.from_numpy(shuff_feat).cuda().float()
-                
+        
         mi_lb, t, et = mi_estimation(stat_net,features,shuff_feat,estimator)
         
         loss = -mi_lb
