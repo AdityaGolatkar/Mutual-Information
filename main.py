@@ -30,6 +30,7 @@ parser = argparse.ArgumentParser(description='Mutual Information experiments')
 parser.add_argument('--batch-size', default=128, type=int,metavar='N', help='mini-batch size (default: 128)')
 parser.add_argument('-b', '--beta', default=1.0, type=float,help='value of beta (default: 1.0)')
 parser.add_argument('--dataset', default='mnist', type=str,help='dataset name')
+parser.add_argument('--data-dim', default=20, type=int,help='data dimension')
 parser.add_argument('--decay', default=0.97, type=float,help='Learning rate exponential decay')
 parser.add_argument('--dropout', action='store_true',help='use dropout')
 parser.add_argument('--estimator', default='mine', type=str,help='mi estimator')
@@ -50,10 +51,24 @@ parser.add_argument('--schedule', nargs='+', default=[200], type=int,help='numbe
 parser.add_argument('--sched_type', default='exp', type=str,help='type of scheduling')
 parser.add_argument('--sfe', action='store_true',help='Save first epoch')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',help='manual epoch number (useful on restarts)')
-parser.add_argument('--s-input-sz', default=512, type=int,help='number of input units in statistics network')
+parser.add_argument('--s-input-sz', default=40, type=int,help='number of input units in statistics network')
 parser.add_argument('--s-hidden-sz', default=512, type=int,help='number of hidden units in statistics network')
 parser.add_argument('--weight-decay', '--wd', default=0.0, type=float,metavar='W', help='weight decay (default: 0.)')
 args = parser.parse_args()
+
+# def sample_batch(data, batch_size=100, sample_mode='joint'):
+#     if sample_mode == 'joint':
+#         index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
+#         batch = data[index]
+#     else:
+#         joint_index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
+#         marginal_index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
+#         batch = np.concatenate([data[joint_index][:,0].reshape(-1,1),data[marginal_index][:,1].reshape(-1,1)],axis=1)
+#     return batch
+
+# def get_corr_data():
+#     y = np.random.multivariate_normal(mean=[0,0],cov=[[1,args.rho],[args.rho,1]],size = 300)
+#     return y
 
 def sample_batch(data, batch_size=100, sample_mode='joint'):
     if sample_mode == 'joint':
@@ -62,11 +77,13 @@ def sample_batch(data, batch_size=100, sample_mode='joint'):
     else:
         joint_index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
         marginal_index = np.random.choice(range(data.shape[0]), size=batch_size, replace=False)
-        batch = np.concatenate([data[joint_index][:,0].reshape(-1,1),data[marginal_index][:,1].reshape(-1,1)],axis=1)
+        batch = np.concatenate([data[joint_index][:,:args.data_dim].reshape(-1,args.data_dim),data[marginal_index][:,args.data_dim:].reshape(-1,args.data_dim)],axis=1)
     return batch
 
 def get_corr_data():
-    y = np.random.multivariate_normal( mean=[0,0],cov=[[1,args.rho],[args.rho,1]],size = 300)
+    y = np.random.multivariate_normal(mean=[0,0],cov=[[1,args.rho],[args.rho,1]],size = (300,args.data_dim))
+    y = y.transpose(0,2,1)
+    y = y.reshape(-1,np.prod(y.shape[1:]))
     return y
 
 def shuffle_features(X):
