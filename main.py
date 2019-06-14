@@ -47,7 +47,7 @@ parser.add_argument('--save', dest='save', action='store_true',help='save the mo
 parser.add_argument('--sample-exp', action='store_true',help='sample experiment')
 parser.add_argument('--save-final', action='store_true', help='save last version of the model')
 parser.add_argument('--save-every', default=5, type=int,help='interval for saving')
-parser.add_argument('--schedule', nargs='+', default=[200], type=int,help='number of total epochs to run')
+parser.add_argument('--schedule', nargs='+', default=[100], type=int,help='number of total epochs to run')
 parser.add_argument('--sched_type', default='exp', type=str,help='type of scheduling')
 parser.add_argument('--sfe', action='store_true',help='Save first epoch')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',help='manual epoch number (useful on restarts)')

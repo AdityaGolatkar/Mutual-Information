@@ -48,4 +48,5 @@ class Statistic_Network(nn.Module):
         output = F.relu(self.fc1(input))
         output = F.relu(self.fc2(output))
         output = self.fc3(output)
+        output = torch.tanh(output)
         return output
